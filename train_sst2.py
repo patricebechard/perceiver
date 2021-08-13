@@ -15,13 +15,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 32
-N_GPUS = 1
-NUM_HIDDEN_LAYERS = 0
-HIDDEN_SIZE = 256
-SEQUENCE_LENGTH = 32
-LATENT_SIZE = 64
+NUM_GPUS = 1
+NUM_EPOCHS = 5
+NUM_HIDDEN_LAYERS = 4
+HIDDEN_SIZE = 512
+SEQUENCE_LENGTH = 64
+LATENT_SIZE = 256
 NUM_ATTENTION_HEADS = 4
 LEARNING_RATE = 1e-4
+
+DEVICE = "cuda" if NUM_GPUS > 0 else "cpu"
 
 
 class LightningPerceiverSST2(pl.LightningModule):
@@ -32,11 +35,18 @@ class LightningPerceiverSST2(pl.LightningModule):
         num_hidden_layers=8,
         hidden_size=256,
         latent_size=64,
+        max_seq_length=32,
         num_attention_heads=4,
     ):
         super().__init__()
+
+        self.max_seq_length = max_seq_length
+
         self.embeddings = nn.Embedding(
             num_embeddings=vocab_size, embedding_dim=hidden_size
+        )
+        self.position_embeddings = nn.Embedding(
+            num_embeddings=max_seq_length, embedding_dim=hidden_size
         )
         self.perceiver = Perceiver(
             num_classes=num_classes if num_classes > 2 else 1,
@@ -50,25 +60,33 @@ class LightningPerceiverSST2(pl.LightningModule):
     def forward(self, tokenized):
 
         embedded = self.embeddings(tokenized)
-        outputs = self.perceiver(embedded)
+
+        # add position embeddings
+        positions = (
+            torch.arange(tokenized.shape[1]).repeat(tokenized.shape[0], 1).to(DEVICE)
+        )
+        position_embedded = self.position_embeddings(positions)
+        embedded = embedded + position_embedded
+
+        outputs = self.perceiver(embedded.permute(1, 0, 2))
         return outputs
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self(x.permute(1, 0))
+        y_hat = self(x)
         loss = self.criterion(y_hat, y)
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self(x.permute(1, 0))
+        y_hat = self(x)
         loss = self.criterion(y_hat, y)
         return {"loss": loss, "labels": y, "logits": y_hat}
 
     def test_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self(x.permute(1, 0))
+        y_hat = self(x)
         loss = self.criterion(y_hat, y)
         return {"loss": loss, "labels": y, "logits": y_hat}
 
@@ -172,8 +190,9 @@ def main():
         hidden_size=HIDDEN_SIZE,
         latent_size=LATENT_SIZE,
         num_attention_heads=NUM_ATTENTION_HEADS,
+        max_seq_length=SEQUENCE_LENGTH,
     )
-    trainer = pl.Trainer(max_epochs=10, gpus=N_GPUS)
+    trainer = pl.Trainer(max_epochs=NUM_EPOCHS, gpus=NUM_GPUS)
     # trainer = pl.Trainer(max_epochs=1)
     trainer.fit(lightning_model, train_loader, val_loader)
 
