@@ -1,3 +1,5 @@
+import logging
+
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
@@ -9,8 +11,17 @@ from transformers import BertTokenizer
 
 from perceiver import Perceiver
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 BATCH_SIZE = 32
 N_GPUS = 1
+NUM_HIDDEN_LAYERS = 0
+HIDDEN_SIZE = 256
+SEQUENCE_LENGTH = 32
+LATENT_SIZE = 64
+NUM_ATTENTION_HEADS = 4
+LEARNING_RATE = 1e-4
 
 
 class LightningPerceiverSST2(pl.LightningModule):
@@ -64,12 +75,14 @@ class LightningPerceiverSST2(pl.LightningModule):
     def validation_epoch_end(self, outputs):
         # get predictions and probs from logits
         logits = torch.cat([x["logits"] for x in outputs])
-        preds = torch.round(logits).detach().cpu().numpy()
-
-        labels = torch.cat([x["labels"] for x in outputs]).detach().cpu().numpy()
+        preds = torch.round(torch.sigmoid(logits)).detach().cpu().numpy().astype(int)
+        labels = (
+            torch.cat([x["labels"] for x in outputs]).detach().cpu().numpy().astype(int)
+        )
         val_loss = torch.stack([x["loss"] for x in outputs]).mean()
         val_accuracy = accuracy_score(preds, labels)
 
+        logger.info(f"Val Loss : {val_loss} --- Val Accuracy : {val_accuracy}")
         self.log("val_loss", val_loss)
         self.log("val_accuracy", val_accuracy)
 
@@ -77,19 +90,21 @@ class LightningPerceiverSST2(pl.LightningModule):
 
     def test_epoch_end(self, outputs):
         logits = torch.cat([x["logits"] for x in outputs])
-        preds = torch.argmax(logits, axis=0).detach().cpu().numpy()
-
-        labels = torch.cat([x["labels"] for x in outputs]).detach().cpu().numpy()
+        preds = torch.round(torch.sigmoid(logits)).detach().cpu().numpy().astype(int)
+        labels = (
+            torch.cat([x["labels"] for x in outputs]).detach().cpu().numpy().astype(int)
+        )
         test_loss = torch.stack([x["loss"] for x in outputs]).mean()
         test_accuracy = accuracy_score(preds, labels)
 
+        logger.info(f"Test Loss : {test_loss} --- Test Accuracy : {test_accuracy}")
         self.log("test_loss", test_loss)
         self.log("test_accuracy", test_accuracy)
 
         return test_loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=1e-3)
+        return torch.optim.Adam(self.parameters(), lr=LEARNING_RATE)
 
 
 def main():
@@ -114,13 +129,25 @@ def main():
     print(tokenizer)
 
     train_tokenized = tokenizer(
-        train_inputs, padding=True, truncation=True, max_length=64, return_tensors="pt"
+        train_inputs,
+        padding=True,
+        truncation=True,
+        max_length=SEQUENCE_LENGTH,
+        return_tensors="pt",
     )
     val_tokenized = tokenizer(
-        val_inputs, padding=True, truncation=True, max_length=64, return_tensors="pt"
+        val_inputs,
+        padding=True,
+        truncation=True,
+        max_length=SEQUENCE_LENGTH,
+        return_tensors="pt",
     )
     test_tokenized = tokenizer(
-        test_inputs, padding=True, truncation=True, max_length=64, return_tensors="pt"
+        test_inputs,
+        padding=True,
+        truncation=True,
+        max_length=SEQUENCE_LENGTH,
+        return_tensors="pt",
     )
 
     # create dataloaders
@@ -138,7 +165,14 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
 
     # training
-    lightning_model = LightningPerceiverSST2(vocab_size, num_classes=num_classes)
+    lightning_model = LightningPerceiverSST2(
+        vocab_size,
+        num_classes=num_classes,
+        num_hidden_layers=NUM_HIDDEN_LAYERS,
+        hidden_size=HIDDEN_SIZE,
+        latent_size=LATENT_SIZE,
+        num_attention_heads=NUM_ATTENTION_HEADS,
+    )
     trainer = pl.Trainer(max_epochs=10, gpus=N_GPUS)
     # trainer = pl.Trainer(max_epochs=1)
     trainer.fit(lightning_model, train_loader, val_loader)
