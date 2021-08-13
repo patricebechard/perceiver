@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -11,6 +12,7 @@ class Perceiver(nn.Module):
         num_hidden_layers=8,
         latent_size=64,
         hidden_size=256,
+        feedforward_size=1024,
         num_attention_heads=4,
         dropout=0.1,
     ):
@@ -21,12 +23,14 @@ class Perceiver(nn.Module):
         self.num_hidden_layers = num_hidden_layers
         self.latent_size = latent_size
         self.hidden_size = hidden_size
+        self.feedforward_size = feedforward_size
         self.num_attention_heads = num_attention_heads
         self.dropout = dropout
 
         # modules
         self.cross_attention = CrossAttentionLayer(
             hidden_size=self.hidden_size,
+            feedforward_size=self.feedforward_size,
             num_attention_heads=self.num_attention_heads,
             dropout=self.dropout,
         )
@@ -63,7 +67,9 @@ class Perceiver(nn.Module):
 
 
 class CrossAttentionLayer(nn.Module):
-    def __init__(self, hidden_size=256, num_attention_heads=4, dropout=0.1):
+    def __init__(
+        self, hidden_size=256, num_attention_heads=4, feedforward_size=1024, dropout=0.1
+    ):
         super().__init__()
 
         self.latent_layer_norm = nn.LayerNorm(hidden_size)
@@ -78,6 +84,15 @@ class CrossAttentionLayer(nn.Module):
             dropout=dropout,
         )
 
+        self.dropout_1 = nn.Dropout(dropout)
+        self.dropout_2 = nn.Dropout(dropout)
+        self.dropout_3 = nn.Dropout(dropout)
+        self.layer_norm_1 = nn.LayerNorm(hidden_size)
+        self.layer_norm_2 = nn.LayerNorm(hidden_size)
+
+        self.linear_out_1 = nn.Linear(hidden_size, feedforward_size)
+        self.linear_out_2 = nn.Linear(feedforward_size, hidden_size)
+
     def forward(self, input_array, latent_array):
 
         input_array = self.input_layer_norm(input_array)
@@ -89,7 +104,12 @@ class CrossAttentionLayer(nn.Module):
 
         out = self.multi_head_attn(query=q, key=k, value=v)[0]
 
-        out = out + latent_array
+        # MLP
+        out = latent_array + self.dropout_1(out)
+        out = self.layer_norm_1(out)
+        out2 = self.linear_out_2(self.dropout_2(F.gelu(self.linear_out_1(out))))
+        out = out + self.dropout_3(out2)
+        out = self.layer_norm_2(out)
         return out
 
 

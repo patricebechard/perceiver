@@ -19,6 +19,7 @@ NUM_GPUS = 1
 NUM_EPOCHS = 5
 NUM_HIDDEN_LAYERS = 4
 HIDDEN_SIZE = 512
+FEEDFORWARD_SIZE = 1024
 SEQUENCE_LENGTH = 64
 LATENT_SIZE = 256
 NUM_ATTENTION_HEADS = 4
@@ -35,6 +36,7 @@ class LightningPerceiverSST2(pl.LightningModule):
         num_hidden_layers=8,
         hidden_size=256,
         latent_size=64,
+        feedforward_size=1024,
         max_seq_length=32,
         num_attention_heads=4,
     ):
@@ -53,6 +55,7 @@ class LightningPerceiverSST2(pl.LightningModule):
             num_hidden_layers=num_hidden_layers,
             latent_size=latent_size,
             hidden_size=hidden_size,
+            feedforward_size=feedforward_size,
             num_attention_heads=num_attention_heads,
         )
         self.criterion = nn.BCEWithLogitsLoss()
@@ -189,6 +192,7 @@ def main():
         num_hidden_layers=NUM_HIDDEN_LAYERS,
         hidden_size=HIDDEN_SIZE,
         latent_size=LATENT_SIZE,
+        feedforward_size=FEEDFORWARD_SIZE,
         num_attention_heads=NUM_ATTENTION_HEADS,
         max_seq_length=SEQUENCE_LENGTH,
     )
